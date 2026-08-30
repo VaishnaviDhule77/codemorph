@@ -1,0 +1,6 @@
+# CodeMorph runtime dependencies.
+#
+# Phase 1 (AST analysis, metrics, complexity) runs on the Python standard
+# library alone (ast, dataclasses). Dependencies for later phases (FastAPI,
+# LLM HTTP client) will be added when those phases land -- no speculative
+# dependencies.
