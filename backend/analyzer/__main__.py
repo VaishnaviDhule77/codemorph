@@ -4,6 +4,7 @@ Usage::
 
     python -m backend.analyzer file.py [--json] [--findings] [--flow]
                                        [--dot OUT.dot]
+                                       [--migrate] [--migrate-out OUT.py]
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import json
 import pathlib
 import sys
 
+from ..migration.deterministic import TransformationEngine
 from .ast_analyzer import SourceParseError
 from .control_flow import cfgs_to_dot, render_cfg
 from .data_flow import flow_findings, render_data_flow
@@ -77,11 +79,44 @@ def _print_flow(result: FileAnalysis, flow_findings_list) -> None:
         _print_findings(flow_findings_list, "Flow-sensitive findings")
 
 
-def main(argv: list[str] | None = None) -> int:
+def _run_migration(args: argparse.Namespace, source: str) -> int:
+    engine = TransformationEngine()
+    result = engine.transform_source(source, filename=args.path.name)
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0
+    status = "applied" if result.applied else (
+        "rejected" if result.transformations else "no-op"
+    )
+    print(
+        f"Deterministic migrations: "
+        f"{len(result.transformations)} transformation(s), {status}"
+    )
+    if result.rejected_reason:
+        print(f"  rejected: {result.rejected_reason}")
+    for t in result.transformations:
+        print(f"  [{t.risk.value:>6}] line {t.line:>4}  {t.kind}")
+        for line in t.original.splitlines() or [""]:
+            print(f"      - {line}")
+        for line in t.replacement.splitlines() or [""]:
+            print(f"      + {line}")
+        print(f"      reason: {t.reason}")
+    if args.migrate_out is not None:
+        args.migrate_out.write_text(result.migrated_source, encoding="utf-8")
+        print(f"wrote migrated source to {args.migrate_out}")
+    elif result.applied:
+        print()
+        print("Migrated source:")
+        print(result.migrated_source, end="")
+        print()
+    return 0
+
+
+def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(
         prog="codemorph",
         description="CodeMorph analyzer: AST structure, metrics, complexity, "
-                    "findings, control & data flow.",
+                    "findings, control & data flow, deterministic migration.",
     )
     parser.add_argument("path", type=pathlib.Path, help="Python source file")
     parser.add_argument("--json", action="store_true", help="emit JSON")
@@ -96,6 +131,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dot", type=pathlib.Path, metavar="OUT",
         help="write a Graphviz DOT file of all CFGs",
+    )
+    parser.add_argument(
+        "--migrate", action="store_true",
+        help="apply deterministic transformations and print a traceable report",
+    )
+    parser.add_argument(
+        "--migrate-out", type=pathlib.Path, metavar="OUT",
+        help="with --migrate: write the migrated source to OUT instead of printing",
     )
     args = parser.parse_args(argv)
 
@@ -115,6 +158,9 @@ def main(argv: list[str] | None = None) -> int:
         args.dot.write_text(cfgs_to_dot(result.cfgs), encoding="utf-8")
         print(f"wrote Graphviz DOT to {args.dot}")
         return 0
+
+    if args.migrate:
+        return _run_migration(args, source)
 
     findings = run_findings(result) if args.findings else []
     flow_findings_list = flow_findings(result.flows, result.filename) if args.flow else []
