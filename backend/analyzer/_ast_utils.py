@@ -81,55 +81,89 @@ def max_nesting_depth(node: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef)
     * ``elif``/``else`` chains stay at the depth of the original ``if``
     * entering a function or class body restarts the count at 0
     """
-    return _block_depth(node.body, depth=0)
-
-
-def _block_depth(stmts: list[ast.stmt], depth: int) -> int:
-    best = depth
-    for stmt in stmts:
-        best = max(best, _stmt_depth(stmt, depth))
+    best, _ = _scan_blocks(node.body, depth=0, threshold=None)
     return best
 
 
-def _stmt_depth(stmt: ast.stmt, depth: int) -> int:
+def first_excessive_nesting_line(
+    node: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef, threshold: int
+) -> int | None:
+    """Line of the first statement nested deeper than ``threshold``.
+
+    Returns ``None`` when nothing exceeds the threshold. Uses the exact same
+    traversal as :func:`max_nesting_depth`, so the two can never disagree.
+    """
+    _, first = _scan_blocks(node.body, depth=0, threshold=threshold)
+    return first
+
+
+def _scan_blocks(
+    stmts: list[ast.stmt], depth: int, threshold: int | None
+) -> tuple[int, int | None]:
+    """Return ``(max_depth, first_line_exceeding_threshold)`` for a block."""
+    best = depth
+    first: int | None = None
+    if threshold is not None and depth > threshold and stmts:
+        first = stmts[0].lineno  # this statement sits deeper than allowed
+    for stmt in stmts:
+        stmt_best, stmt_first = _scan_stmt(stmt, depth, threshold)
+        if stmt_best > best:
+            best = stmt_best
+        if first is None:
+            first = stmt_first
+    return best, first
+
+
+def _scan_stmt(
+    stmt: ast.stmt, depth: int, threshold: int | None
+) -> tuple[int, int | None]:
     if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return _block_depth(stmt.body, depth=0)  # new scope: restart
+        return _scan_blocks(stmt.body, depth=0, threshold=threshold)  # new scope
 
     if isinstance(stmt, ast.If):
-        best = _block_depth(stmt.body, depth + 1)
+        best, first = _scan_blocks(stmt.body, depth + 1, threshold)
         if stmt.orelse:
             if _is_elif(stmt.orelse):
-                best = max(best, _stmt_depth(stmt.orelse[0], depth))
+                # elif continues at the same depth; else adds a level
+                b, f = _scan_stmt(stmt.orelse[0], depth, threshold)
             else:
-                best = max(best, _block_depth(stmt.orelse, depth + 1))
-        return best
+                b, f = _scan_blocks(stmt.orelse, depth + 1, threshold)
+            best = max(best, b)
+            first = first if first is not None else f
+        return best, first
 
     if isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
-        best = _block_depth(stmt.body, depth + 1)
+        best, first = _scan_blocks(stmt.body, depth + 1, threshold)
         if stmt.orelse:
-            best = max(best, _block_depth(stmt.orelse, depth + 1))
-        return best
+            b, f = _scan_blocks(stmt.orelse, depth + 1, threshold)
+            best = max(best, b)
+            first = first if first is not None else f
+        return best, first
 
     if isinstance(stmt, _TRY):
-        best = _block_depth(stmt.body, depth + 1)
+        best, first = _scan_blocks(stmt.body, depth + 1, threshold)
+        for part in (stmt.orelse, stmt.finalbody):
+            b, f = _scan_blocks(part, depth + 1, threshold)
+            best = max(best, b)
+            first = first if first is not None else f
         for handler in stmt.handlers:
-            best = max(best, _block_depth(handler.body, depth + 1))
-        if stmt.orelse:
-            best = max(best, _block_depth(stmt.orelse, depth + 1))
-        if stmt.finalbody:
-            best = max(best, _block_depth(stmt.finalbody, depth + 1))
-        return best
+            b, f = _scan_blocks(handler.body, depth + 1, threshold)
+            best = max(best, b)
+            first = first if first is not None else f
+        return best, first
 
     if isinstance(stmt, _WITH):
-        return _block_depth(stmt.body, depth + 1)
+        return _scan_blocks(stmt.body, depth + 1, threshold)
 
     if _MATCH is not None and isinstance(stmt, _MATCH):
-        best = depth + 1
+        best, first = depth + 1, None
         for case in stmt.cases:
-            best = max(best, _block_depth(case.body, depth + 1))
-        return best
+            b, f = _scan_blocks(case.body, depth + 1, threshold)
+            best = max(best, b)
+            first = first if first is not None else f
+        return best, first
 
-    return depth
+    return depth, None
 
 
 def _is_elif(orelse: list[ast.stmt]) -> bool:

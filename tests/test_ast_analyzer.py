@@ -124,10 +124,38 @@ def test_classes(calculator_analysis):
 
 
 def test_internal_dependencies(calculator_analysis):
+    # Callees are recorded by QUALIFIED name: the nested ``clamp`` helper
+    # lives at ``Calculator._run_nested.clamp``. Qualified names keep the
+    # graph unambiguous when different scopes define same-named functions.
     assert calculator_analysis.module.dependencies == {
         "calculate_total": ["calculate_tax", "validate_amount"],
-        "Calculator._run_nested": ["clamp"],
+        "Calculator._run_nested": ["Calculator._run_nested.clamp"],
         "main": ["Calculator.add", "calculate_total"],
+    }
+
+
+def test_same_simple_name_in_two_scopes_stays_distinct():
+    """Name-based call resolution over-approximates but never conflates identities.
+
+    A call to ``helper()`` matches BOTH definitions (documented
+    over-approximation in the README), yet each callee is recorded under
+    its own qualified name -- a simple-name graph could not tell them apart.
+    """
+    source = (
+        "def outer_a():\n"
+        "    def helper():\n"
+        "        return 1\n"
+        "    return helper()\n"
+        "\n"
+        "def outer_b():\n"
+        "    def helper():\n"
+        "        return 2\n"
+        "    return helper()\n"
+    )
+    deps = analyze_source(source).module.dependencies
+    assert deps == {
+        "outer_a": ["outer_a.helper", "outer_b.helper"],
+        "outer_b": ["outer_a.helper", "outer_b.helper"],
     }
 
 

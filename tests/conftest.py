@@ -18,3 +18,9 @@ def calculator_source() -> str:
 @pytest.fixture()
 def calculator_analysis(calculator_source: str):
     return analyze_source(calculator_source, filename="calculator.py")
+
+
+@pytest.fixture()
+def smelly_source() -> str:
+    """Source that triggers every Phase-2 rule (see tests/test_findings.py)."""
+    return (FIXTURES_DIR / "smelly.py").read_text(encoding="utf-8")

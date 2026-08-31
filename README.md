@@ -186,3 +186,55 @@ Correctness-critical detail: positional defaults align to the end of the positio
 The call graph is honest about being approximate. It resolves calls by simple-name matching (last dotted segment), which over-approximates (obj.add() matches any add). This is documented rather than hidden; Phase 3's data-flow analysis refines it.
 
 Forward-looking structure: ModuleInfo contains zero AST references, so FileAnalysis.to_dict() is directly JSON-serializable (tested) — ready for the FastAPI layer (Phase 9) and for structural diffing between original and migrated code (Phase 6).
+
+1. Phase tracker — change row 2 to:
+
+| 2 | Static-analysis rules (code smells, findings engine) | done |
+
+2. Architecture tree — add after the complexity.py line:
+
+├── findings.py code-smell rules engine: Finding, FindingsEngine
+
+3. New section — insert after "Metric definitions":
+
+Static-analysis findings (Phase 2)
+FindingsEngine consumes a FileAnalysis and emits Finding records withthe exact schema file / line / category / severity / message / suggestion.Run via python -m backend.analyzer file.py --findings orrun_findings(analysis). Thresholds live in FindingsConfig.
+
+Category	Severity	Fires when
+UNUSED_IMPORT	MEDIUM	imported name never read anywhere (per-name granularity)
+UNUSED_VARIABLE	LOW	binding never read in its scope
+LONG_FUNCTION	MEDIUM	function exceeds 50 lines
+DEEP_NESTING	MEDIUM	nesting exceeds 3 (finding points at the offending line)
+HIGH_COMPLEXITY	MEDIUM / HIGH	cyclomatic complexity > 10 / > 20
+EXCESSIVE_BRANCHING	MEDIUM	more than 8 conditionals in a function
+DUPLICATED_PATTERN	LOW	≥ 3 identical consecutive statements
+MISSING_ERROR_HANDLING	MEDIUM (I/O) / LOW (parse)	risky call outside any try body
+BARE_EXCEPT	MEDIUM	except: without a type
+DANGEROUS_EVAL / _EXEC	HIGH	builtin eval() / exec() call
+Documented false-positive directions (by design)
+Unused names: reads are credited to the innermost binding scope —shadowed imports resolve correctly — but x += 1 / del x count as uses,_-prefixed names are exempt, parameters are never reported, andglobal/nonlocal conservatively mark names used. Unused functions arenot reported (library code defines APIs it never calls itself).
+Missing error handling is intraprocedural: a risky call inside a helperis flagged even when every current caller wraps the call. Guard semanticsmatch Python exactly — try bodies guard; else clauses, handlers, andfinally do not; guards reset at function boundaries.
+Exemptions that prevent noise: __future__ imports, star imports,__all__ re-exports, and method calls named eval/exec (e.g. PyTorch'smodel.eval()).
+Quoted (string) type annotations are not parsed, so imports used onlyinside them may be falsely flagged.
+Phase 3's data-flow analysis refines the unused-variable rule with properdef-use chains.
+
+In the phase tracker, change row 3 to | 3 | Control-flow & data-flow analysis | **done** |.
+
+In the architecture tree, after complexity.py:
+
+├── control_flow.py per-function CFGs (blocks, branches, loops, handlers)├── data_flow.py reaching definitions, def-use chains, dead stores
+
+Add CLI usage examples and these two sections (after "Static-analysis findings"):
+
+Control-flow analysis (Phase 3)
+build_cfgs(tree) builds one CFG per function: entry/exit, basicblocks, condition nodes (if/while tests), loop headers (for/while),handler nodes, match nodes. Edge kinds: normal, true, false,case, loop_back, break, continue, exception, return.Correct-by-construction details: break skips the loop's else clause;continue targets the loop header; loop else runs only on normaltermination; falling off the end becomes an implicit return edge;uncaught raise becomes an exception edge to exit; unreachable nodes arereported as dead code.
+
+Documented approximations: exception edges are conservative (every nodeinside a try body may jump to any handler of that try); raise connectsonly to the innermost enclosing handlers; exceptional flow throughfinally is not modeled (finally runs on the normal and handler paths);with is transparent; the CFG is intraprocedural.
+
+CLI: --flow prints text renderings; --dot out.dot exports Graphviz.
+
+Data-flow analysis (Phase 3)
+build_data_flows(cfgs, module) runs classic reaching-definitions(gen/kill fixpoint over the CFG) and produces per function: definitions(params, assignments, loop targets, except-bindings, imports, deletes),uses with the definitions that may reach them (def-use chains), producer →consumer chains (amount -> validated -> tax -> total -> return),external inputs (module-level and builtin names), dead stores (definitionsreaching no use), and possibly-undefined uses (uses with no reachingdefinition on any path). flow_findings() exposes the last two asFinding records (POSSIBLY_UNDEFINED_USE / DEAD_STORE), separate fromthe Phase-2 lexical engine — flow analysis finds what lexical rules cannot(e.g. x = compute(); x = 5 is a dead store, and an unused self is astaticmethod candidate).
+
+Limitations: may-analysis (use-before-def under-reported); closure readsare approximated (loads inside nested scopes minus names they bind);comprehension targets bind in the enclosing scope; del is modeled as akilling definition. These feed the Phase-6 equivalence comparison.
+
