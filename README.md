@@ -238,3 +238,23 @@ build_data_flows(cfgs, module) runs classic reaching-definitions(gen/kill fixpoi
 
 Limitations: may-analysis (use-before-def under-reported); closure readsare approximated (loads inside nested scopes minus names they bind);comprehension targets bind in the enclosing scope; del is modeled as akilling definition. These feed the Phase-6 equivalence comparison.
 
+Phase tracker row 5 → | 5 | Syntax validation + sandboxed test execution | **done** |. Architecture tree, after the migration/ block:
+
+├── verification/│ ├── sandbox.py isolated subprocess execution (Phase 5)│ ├── syntax_checker.py compile()-based syntax gate│ ├── test_generator.py signature-driven test inputs│ └── test_runner.py differential execution + comparison
+
+New section after "Deterministic transformations":
+
+Sandboxed verification (Phase 5)
+backend/verification/ adds the execution half of the pipeline:
+
+syntax_checker — check_syntax() compiles generated code and returnsa structured result. compile() (not ast.parse) is used deliberately:it also rejects misplaced __future__ imports and other post-parseerrors that would fail at import time.
+test_generator — derives deterministic test inputs per function:normal / boundary / empty / invalid / default cases. Types come fromplain-builtin annotations, else documented name heuristics, else int.Methods, nested and async functions, _-prefixed names and main areskipped.
+sandbox — every execution happens in a separate python -I processwith a near-empty environment (host env vars and API keys never passthrough), a fresh temporary working directory, a wall-clock timeout(CODEMORPH_EXEC_TIMEOUT, default 5s), and best-effort POSIX rlimits(memory, CPU, file size) plus setsid. The program is fed via stdin,never argv.
+test_runner — verify_migration(original, migrated) runs bothversions on the same generated cases and compares return values (repr),raised exceptions (type), and captured stdout (observable side effect).Per case: PASS / FAIL / ERROR.
+CLI: python -m backend.analyzer file.py --verify
+
+Security limitations (documented, not hidden)
+Process-level isolation, not a container: absolute-path filesystemaccess and network access remain possible inside the sandbox; only thedirect child is killed on timeout; Windows skips rlimits. The comparisonis heuristic: repr equality (address-bearing reprs compared structurally),exception type equality, stdout equality. This is differential testing,not proof.
+
+Interpretation caveat (found in testing)
+Legacy code that does not execute on the current runtime (Python 2 idiomssuch as dict.has_key) cannot pass differential comparison: the originalcrashes while the migration returns a value, so every case reports adivergence — even though the migration repaired the code. FAIL outcomesmust be read together with the Phase-4 transformation registry; this isprecisely the static-analysis-plus-testing combination CodeMorph studies.
