@@ -5,7 +5,7 @@ Usage::
     python -m backend.analyzer file.py [--json] [--findings] [--flow]
                                        [--dot OUT.dot]
                                        [--migrate] [--migrate-out OUT.py]
-                                       [--verify]
+                                       [--verify] [--equivalence]
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import pathlib
 import sys
 
 from ..migration.deterministic import TransformationEngine
-from ..verification import verify_migration
+from ..verification import compute_equivalence, render_equivalence, verify_migration
 from .ast_analyzer import SourceParseError
 from .control_flow import cfgs_to_dot, render_cfg
 from .data_flow import flow_findings, render_data_flow
@@ -148,12 +148,37 @@ def _run_verify(args: argparse.Namespace, source: str) -> int:
     return 0
 
 
+def _run_equivalence(args: argparse.Namespace, source: str) -> int:
+    engine = TransformationEngine()
+    migration = engine.transform_source(source, filename=args.path.name)
+    report = compute_equivalence(
+        source, migration.migrated_source, filename=args.path.name
+    )
+    if args.json:
+        payload = report.to_dict()
+        payload["deterministic_transformations"] = [
+            t.to_dict() for t in migration.transformations
+        ]
+        print(json.dumps(payload, indent=2))
+        return 0
+    print(
+        f"Deterministic migrations: {len(migration.transformations)} "
+        f"transformation(s), "
+        f"{'applied' if migration.applied else 'no-op'}"
+    )
+    if migration.rejected_reason:
+        print(f"  rejected: {migration.rejected_reason}")
+    print()
+    print(render_equivalence(report))
+    return 0
+
+
 def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(
         prog="codemorph",
         description="CodeMorph analyzer: AST structure, metrics, complexity, "
                     "findings, control & data flow, deterministic migration, "
-                    "sandboxed verification.",
+                    "sandboxed verification, equivalence estimation.",
     )
     parser.add_argument("path", type=pathlib.Path, help="Python source file")
     parser.add_argument("--json", action="store_true", help="emit JSON")
@@ -181,6 +206,11 @@ def main(argv: "list[str] | None" = None) -> int:
         "--verify", action="store_true",
         help="migrate, then run sandboxed differential verification (Phase 5)",
     )
+    parser.add_argument(
+        "--equivalence", action="store_true",
+        help="migrate, verify, and compute the semantic-equivalence "
+             "estimate (Phase 6)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -205,6 +235,9 @@ def main(argv: "list[str] | None" = None) -> int:
 
     if args.verify:
         return _run_verify(args, source)
+
+    if args.equivalence:
+        return _run_equivalence(args, source)
 
     findings = run_findings(result) if args.findings else []
     flow_findings_list = flow_findings(result.flows, result.filename) if args.flow else []

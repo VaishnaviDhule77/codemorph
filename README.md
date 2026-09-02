@@ -258,3 +258,25 @@ Process-level isolation, not a container: absolute-path filesystemaccess and net
 
 Interpretation caveat (found in testing)
 Legacy code that does not execute on the current runtime (Python 2 idiomssuch as dict.has_key) cannot pass differential comparison: the originalcrashes while the migration returns a value, so every case reports adivergence — even though the migration repaired the code. FAIL outcomesmust be read together with the Phase-4 transformation registry; this isprecisely the static-analysis-plus-testing combination CodeMorph studies.
+
+5. README patch
+Phase tracker row 6 → | 6 | Behavioral/semantic-equivalence estimation | **done** |. Architecture tree: add │ └── equivalence.py multi-signal equivalence estimate (Phase 6) under verification/. New section after "Sandboxed verification":
+
+Semantic-equivalence estimation (Phase 6)
+compute_equivalence(original, migrated) fuses four signals into oneestimated score (0–100%) with a per-signal breakdown:
+
+Signal	Source	Compares
+structural	Phase-1 module model	function-name Jaccard, 7-feature signature similarity, classes/methods, module variables
+control_flow	Phase-3 CFGs	node-kind & edge-kind multiset Jaccard, statement-count ratio, per function
+data_flow	Phase-3 def-use chains	params, defined/used variables, producer→consumer edges, external inputs, per function
+test_behavior	Phase-5 sandboxed tests	PASS fraction over decisive cases (ERRORs excluded and noted)
+Aggregate = weighted mean over available signals (default equal weights;run_tests=False gives a fast static-only estimate, explicitly noted).Functions present in only one version score 0. Labels: very-high ≥95,high ≥80, moderate ≥60, low ≥40, very-low below; invalid for syntaxfailures (score 0).
+
+CLI: python -m backend.analyzer file.py --equivalence
+
+This is an estimate, not a proof
+Two blind spots are pinned by tests in the suite:
+
+Static signals are blind to structure-preserving changes —x + 1 → x + 2 scores 100% on all three static signals; only thetest signal catches it (aggregate drops to 83%).
+Tests cannot distinguish "migration broke the code" from "the originalnever ran here" — a Python 2 idiom in the original fails every testeven when the migration repaired it (static 100%, aggregate 75%).FAIL outcomes must be interpreted with the Phase-4 transformationregistry.
+Additional limitations: signature-derived test inputs cover a shallowinput space; comparison is repr/exception-type/stdout based; CFGsimilarity uses kind distributions, not isomorphism. Every report carriesthe disclaimer in notes and to_dict().
