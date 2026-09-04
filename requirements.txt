@@ -1,7 +1,10 @@
 # CodeMorph runtime dependencies.
 #
-# Phases 1-7 (analysis, findings, CFG/data-flow, deterministic migration,
-# sandboxed verification, equivalence, LLM integration) run on the Python
-# standard library alone (ast, subprocess, urllib, ...). Dependencies for
-# later phases (FastAPI, frontend tooling) will be added when those phases
-# land -- no speculative dependencies.
+# Phases 1-8 (analysis, findings, CFG/data-flow, deterministic migration,
+# sandboxed verification, equivalence, LLM integration, repository
+# analysis) run on the Python standard library alone. Phase 9 (web
+# interface) adds the first runtime dependencies:
+fastapi>=0.110
+uvicorn>=0.29
+# File-upload endpoints (api/analyze/upload) parse multipart form data.
+python-multipart>=0.0.9
