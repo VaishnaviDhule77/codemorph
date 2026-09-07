@@ -1,0 +1,32 @@
+[
+  {
+    "method": "llm_only",
+    "mode": "scripted",
+    "model": "scripted-identity",
+    "timestamp": "2026-09-07T05:05:52+00:00",
+    "tasks": 8,
+    "syntax_success_pct": 100.0,
+    "migration_success_pct": 100.0,
+    "test_pass_pct": 100.0,
+    "avg_equivalence_pct": 100.0,
+    "introduced_defects": 0,
+    "rejection_rate_pct": 0.0,
+    "avg_duration_s": 0.064,
+    "note": "SCRIPTED CALIBRATION: deterministic identity responses; this run validates the measurement harness, NOT model behavior."
+  },
+  {
+    "method": "codemorph",
+    "mode": "scripted",
+    "model": "scripted-identity",
+    "timestamp": "2026-09-07T05:05:52+00:00",
+    "tasks": 8,
+    "syntax_success_pct": 100.0,
+    "migration_success_pct": 100.0,
+    "test_pass_pct": 100.0,
+    "avg_equivalence_pct": 100.0,
+    "introduced_defects": 0,
+    "rejection_rate_pct": 0.0,
+    "avg_duration_s": 0.127,
+    "note": "SCRIPTED CALIBRATION: deterministic identity responses; this run validates the measurement harness, NOT model behavior."
+  }
+]

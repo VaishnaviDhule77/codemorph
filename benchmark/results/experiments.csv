@@ -1,0 +1,3 @@
+method,mode,model,timestamp,tasks,syntax_success_pct,migration_success_pct,test_pass_pct,avg_equivalence_pct,introduced_defects,rejection_rate_pct,avg_duration_s,note
+llm_only,scripted,scripted-identity,2026-09-07T05:05:52+00:00,8,100.0,100.0,100.0,100.0,0,0.0,0.064,"SCRIPTED CALIBRATION: deterministic identity responses; this run validates the measurement harness, NOT model behavior."
+codemorph,scripted,scripted-identity,2026-09-07T05:05:52+00:00,8,100.0,100.0,100.0,100.0,0,0.0,0.127,"SCRIPTED CALIBRATION: deterministic identity responses; this run validates the measurement harness, NOT model behavior."
