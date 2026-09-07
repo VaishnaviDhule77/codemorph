@@ -6,7 +6,5 @@ venv/
 .env
 .coverage
 htmlcov/
-dist/
 build/
 *.egg-info/
-node_modules/
