@@ -16,6 +16,16 @@ Security posture (localhost research tool; documented, not hidden):
   untrusted network -- it discloses repository structure to the caller.
 * LLM configuration is environment-only; the API key is never echoed by
   any endpoint (tested).
+
+SAFE MODE (public deployments): ``CODEMORPH_SAFE_MODE`` set to a truthy
+value disables every endpoint that probes local paths or executes
+submitted/generated code (``/repository``, ``/verify``, ``/llm-migrate``
+return 403; ``/pipeline`` falls back to a static-only equivalence
+estimate). Analysis, deterministic migration, and the diff view remain
+fully functional -- they are pure computation. The environment variable
+is read once at import time (deployments restart to pick it up); the
+module-level flag is read at call time, so tests can toggle it via
+``monkeypatch.setattr``.
 """
 from __future__ import annotations
 
@@ -40,6 +50,10 @@ from ..repository import RepositoryError, analyze_repository
 from ..verification import compute_equivalence
 from ..verification.sandbox import SandboxConfig
 from .diffing import line_diff
+
+SAFE_MODE = os.environ.get("CODEMORPH_SAFE_MODE", "") not in (
+    "", "0", "false", "False",
+)
 
 router = APIRouter(prefix="/api")
 
@@ -107,12 +121,13 @@ def _analyze_payload(source: str, filename: str) -> dict:
 
 @router.get("/health")
 def health() -> dict:
-    """Liveness + LLM provider status (never the key)."""
+    """Liveness + LLM provider status (never the key) + safe-mode flag."""
     provider = create_provider()
     return {
         "status": "ok",
         "llm_provider": provider.name,
         "llm_configured": not isinstance(provider, NullProvider),
+        "safe_mode": SAFE_MODE,
     }
 
 
@@ -156,6 +171,11 @@ async def analyze_upload(file: UploadFile = File(...)) -> dict:
 @router.post("/repository")
 def repository(request: RepositoryRequest) -> dict:
     """Phase-8 repository analysis for a local path (read-only)."""
+    if SAFE_MODE:
+        raise HTTPException(
+            status_code=403,
+            detail="repository analysis is disabled in safe mode",
+        )
     try:
         report = analyze_repository(request.path)
     except RepositoryError as exc:
@@ -181,6 +201,16 @@ def migrate(request: AnalyzeRequest) -> dict:
 @router.post("/llm-migrate")
 def llm_migrate(request: AnalyzeRequest) -> dict:
     """Phase-7 gated LLM migration (provider from the environment)."""
+    if SAFE_MODE:
+        # The pipeline's verification stage executes GENERATED code in the
+        # sandbox once a provider is configured; safe mode forbids that.
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "LLM migration is disabled in safe mode: its verification "
+                "stage executes generated code in the sandbox"
+            ),
+        )
     try:
         result = LLMMigrator(
             sandbox_config=SandboxConfig.from_env()
@@ -196,6 +226,14 @@ def llm_migrate(request: AnalyzeRequest) -> dict:
 @router.post("/verify")
 def verify(request: VerifyRequest) -> dict:
     """Phase-6 equivalence estimate (includes Phase-5 verification)."""
+    if SAFE_MODE:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "code execution is disabled in safe mode; equivalence "
+                "estimates are static-only in this deployment"
+            ),
+        )
     try:
         report = compute_equivalence(
             request.original,
@@ -212,7 +250,7 @@ def verify(request: VerifyRequest) -> dict:
 @router.post("/pipeline")
 def pipeline(request: PipelineRequest) -> dict:
     """One-shot demo endpoint: analyze -> deterministic migrate ->
-    re-analyze -> sandboxed tests -> equivalence estimate."""
+    re-analyze -> equivalence estimate (sandboxed tests unless safe mode)."""
     try:
         analysis = analyze_source(request.source, filename=request.filename)
         findings_before = collect_all_findings(analysis, request.filename)
@@ -223,7 +261,7 @@ def pipeline(request: PipelineRequest) -> dict:
             request.source,
             migration.migrated_source,
             filename=request.filename,
-            run_tests=request.run_tests,
+            run_tests=request.run_tests and not SAFE_MODE,
             sandbox_config=SandboxConfig.from_env(),
         )
         migrated_analysis = analyze_source(

@@ -32,7 +32,7 @@ def clean_llm_env(monkeypatch):
         "CODEMORPH_LLM_PROVIDER", "CODEMORPH_LLM_API_KEY",
         "CODEMORPH_LLM_MODEL", "CODEMORPH_LLM_BASE_URL",
         "CODEMORPH_LLM_TIMEOUT", "CODEMORPH_EXEC_TIMEOUT",
-        "CODEMORPH_RESULTS_DIR",
+        "CODEMORPH_RESULTS_DIR", "CODEMORPH_SAFE_MODE",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -47,6 +47,7 @@ def test_health_reports_status_and_provider(client, clean_llm_env):
     assert data["status"] == "ok"
     assert data["llm_provider"] == "none"
     assert data["llm_configured"] is False
+    assert data["safe_mode"] is False
     assert "api_key" not in json.dumps(data).lower()
 
 
@@ -374,3 +375,60 @@ def test_experiments_returns_stored_results(client, tmp_path, monkeypatch):
     resp = client.get("/api/experiments")
     data = resp.json()
     assert data["experiments"] == [{"name": "trial", "score": 91}]
+
+
+# -- safe mode (public-deployment contract) ------------------------------------------------------------------
+
+
+def test_safe_mode_blocks_execution_and_repository(monkeypatch):
+    """Public-deployment contract: safe mode disables every endpoint that
+    probes local paths or executes submitted/generated code, while pure
+    computation (analysis, migration, diff) stays fully functional.
+
+    The endpoints read the module-level SAFE_MODE global at call time, so
+    monkeypatching the attribute toggles behavior without env/reload
+    gymnastics, and restores it automatically afterwards.
+    """
+    monkeypatch.setattr("backend.api.routes.SAFE_MODE", True)
+    client = TestClient(create_app())
+
+    # dangerous endpoints: blocked
+    assert client.post(
+        "/api/repository", json={"path": "/"}
+    ).status_code == 403
+    assert client.post(
+        "/api/verify",
+        json={"original": "x = 1\n", "migrated": "x = 1\n"},
+    ).status_code == 403
+    assert client.post(
+        "/api/llm-migrate",
+        json={"source": SOURCE, "filename": "inline.py"},
+    ).status_code == 403
+
+    # health reports the mode (one-curl deployment checklist)
+    health = client.get("/api/health").json()
+    assert health["safe_mode"] is True
+
+    # pure computation is unaffected
+    assert client.post(
+        "/api/analyze", json={"source": SOURCE}
+    ).status_code == 200
+    assert client.post(
+        "/api/diff", json={"original": "a\n", "migrated": "b\n"}
+    ).status_code == 200
+    assert client.post(
+        "/api/migrate", json={"source": LEGACY, "filename": "legacy.py"}
+    ).status_code == 200
+
+    # pipeline works but falls back to a static-only equivalence estimate
+    resp = client.post(
+        "/api/pipeline", json={"source": LEGACY, "filename": "legacy.py"}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["migration"]["applied"] is True
+    assert data["equivalence"]["verification"] is None
+    assert any(
+        "static signals only" in note
+        for note in data["equivalence"]["notes"]
+    )

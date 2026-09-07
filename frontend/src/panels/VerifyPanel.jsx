@@ -12,14 +12,20 @@ export default function VerifyPanel({ source, filename, migration }) {
   const [loading, setLoading] = useState(false);
 
   async function run() {
-    setError(''); setLoading(true); setReport(null);
+    setError(''); setLoading(true); setReport(null); setRows([]);
+    // The diff is pure computation and works in every deployment mode --
+    // fetch it FIRST so the comparison view survives a verify 403
+    // (safe mode blocks code execution, not diffing).
     try {
-      const [r, d] = await Promise.all([
-        api.verify(original, migrated, filename),
-        api.diff(original, migrated),
-      ]);
-      setReport(r);
+      const d = await api.diff(original, migrated);
       setRows(d.rows);
+    } catch (e) {
+      setError(e.message);
+      setLoading(false);
+      return;
+    }
+    try {
+      setReport(await api.verify(original, migrated, filename));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -111,12 +117,14 @@ export default function VerifyPanel({ source, filename, migration }) {
               <p className="muted">No test run (static-only estimate).</p>
             )}
           </section>
-
-          <section className="card">
-            <h2>Side-by-side comparison</h2>
-            <DiffView rows={rows} />
-          </section>
         </>
+      )}
+
+      {rows.length > 0 && (
+        <section className="card">
+          <h2>Side-by-side comparison</h2>
+          <DiffView rows={rows} />
+        </section>
       )}
     </div>
   );
